@@ -198,9 +198,15 @@ impl ClientConfig {
     }
 
     /// Extract a Websockets HTTP request.
-    pub fn connect_http_request(&self) -> Request {
+    pub fn connect_http_request(&self, reconnect_token: &Option<String>) -> Request {
+        let mut connect_url = self.url.clone();
+
+        if let Some(token) = reconnect_token {
+            connect_url.query_pairs_mut().append_pair("reconnect_token", token);
+        }
+
         let mut http_request = Request::builder()
-            .uri(self.url.as_str())
+            .uri(connect_url.as_str())
             .method("GET")
             .header("Host", self.url.host().unwrap().to_string())
             .header("Connection", "Upgrade")
@@ -314,7 +320,7 @@ pub trait ClientConnector {
     /// Connect to a websocket server.
     ///
     /// Returns `Err` if the request is invalid.
-    async fn connect(&self, client_config: &ClientConfig) -> Result<Self::Socket, Self::WSError>;
+    async fn connect(&self, client_config: &ClientConfig, reconnect_token: &Option<String>) -> Result<Self::Socket, Self::WSError>;
 }
 
 /// An `ezsockets` client.
@@ -457,6 +463,7 @@ pub fn connect_with<E: ClientExt + 'static>(
             &client_connector,
             &mut to_socket_receiver,
             &mut client,
+            &None
         )
         .await?
         else {
@@ -470,11 +477,20 @@ pub fn connect_with<E: ClientExt + 'static>(
             client_call_receiver,
             config,
             client_connector,
+            reconnect_token: None
         };
         actor.run(Some(socket)).await?;
         Ok(())
     });
     (handle, future)
+}
+
+use serde::Deserialize;
+
+#[derive(Deserialize)]
+pub struct BridgeInfo {
+    pub bridge_id: String,
+    reconnect_token: String
 }
 
 struct ClientActor<E: ClientExt, C: ClientConnector> {
@@ -483,6 +499,7 @@ struct ClientActor<E: ClientExt, C: ClientConnector> {
     client_call_receiver: async_channel::Receiver<E::Call>,
     config: ClientConfig,
     client_connector: C,
+    reconnect_token: Option<String>
 }
 
 impl<E: ClientExt, C: ClientConnector> ClientActor<E, C> {
@@ -560,7 +577,12 @@ impl<E: ClientExt, C: ClientConnector> ClientActor<E, C> {
         match result {
             Some(Ok(message)) => {
                 match message.to_owned() {
-                    Message::Text(text) => self.client.on_text(text).await?,
+                    Message::Text(text) => {
+                        let bridge_info = serde_json::from_str::<BridgeInfo>(text.as_str())?;
+                        self.reconnect_token = Some(bridge_info.reconnect_token);
+                        tracing::debug!("set reconnect token to {:?}", self.reconnect_token);
+                        self.client.on_text(text).await?
+                    },
                     Message::Binary(bytes) => self.client.on_binary(bytes).await?,
                     Message::Close(frame) => {
                         tracing::debug!("client closed by server");
@@ -599,6 +621,7 @@ impl<E: ClientExt, C: ClientConnector> ClientActor<E, C> {
                     &self.client_connector,
                     &mut self.to_socket_receiver,
                     &mut self.client,
+                    &self.reconnect_token,
                 )
                 .await
             }
@@ -617,6 +640,7 @@ impl<E: ClientExt, C: ClientConnector> ClientActor<E, C> {
                     &self.client_connector,
                     &mut self.to_socket_receiver,
                     &mut self.client,
+                    &self.reconnect_token,
                 )
                 .await
             }
@@ -632,6 +656,7 @@ async fn client_connect<E: ClientExt, Connector: ClientConnector>(
     client_connector: &Connector,
     to_socket_receiver: &mut async_channel::Receiver<InMessage>,
     client: &mut E,
+    reconnect_token: &Option<String>
 ) -> Result<Option<Socket>, Error> {
     for i in 1.. {
         // handle incoming user messages
@@ -661,7 +686,7 @@ async fn client_connect<E: ClientExt, Connector: ClientConnector>(
 
         // connection attempt
         tracing::info!("connecting attempt no: {}...", i);
-        let result = client_connector.connect(config).await;
+        let result = client_connector.connect(config, reconnect_token).await;
         match result {
             Ok(socket_impl) => {
                 tracing::info!("successfully connected");

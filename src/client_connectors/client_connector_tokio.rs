@@ -49,8 +49,8 @@ impl ClientConnector for ClientConnectorTokio {
     /// Connect to a websocket server.
     ///
     /// Returns `Err` if the request is invalid.
-    async fn connect(&self, config: &ClientConfig) -> Result<Self::Socket, Self::WSError> {
-        let request = config.connect_http_request();
+    async fn connect(&self, config: &ClientConfig, reconnect_token: &Option<String>) -> Result<Self::Socket, Self::WSError> {
+        let request = config.connect_http_request(reconnect_token);
         let (socket, _) = tokio_tungstenite::connect_async(request).await?;
         Ok(socket)
     }

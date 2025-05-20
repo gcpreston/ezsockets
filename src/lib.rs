@@ -20,10 +20,14 @@ pub use socket::Sink;
 pub use socket::Socket;
 pub use socket::SocketConfig;
 pub use socket::Stream;
+pub use socket::InMessage;
 
 /// Re-exported from `tungstenite`.
 pub use ::tungstenite::Utf8Bytes;
 pub use bytes::Bytes;
+
+// Re-exported from `async-channel`.
+pub use async_channel::SendError;
 
 cfg_if::cfg_if! {
     if #[cfg(feature = "client")] {
