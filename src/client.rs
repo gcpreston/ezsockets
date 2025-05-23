@@ -580,7 +580,7 @@ impl<E: ClientExt, C: ClientConnector> ClientActor<E, C> {
                     Message::Text(text) => {
                         let bridge_info = serde_json::from_str::<BridgeInfo>(text.as_str())?;
                         self.reconnect_token = Some(bridge_info.reconnect_token);
-                        tracing::debug!("set reconnect token to {:?}", self.reconnect_token);
+                        tracing::debug!("set reconnect token");
                         self.client.on_text(text).await?
                     },
                     Message::Binary(bytes) => self.client.on_binary(bytes).await?,
